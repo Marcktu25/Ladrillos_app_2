@@ -190,7 +190,7 @@
     </div>
 
     <div class="square widget" id="3d">
-      <div class="label">&#128230; Roll / Pitch / Yaw</div>
+      <div class="label">&#128230; Giro relativo</div>
       <div class="euler" id="canvasDigits">
         <span id="rollValue">Roll: -</span>
         <span id="pitchValue">Pitch: -</span>
@@ -208,8 +208,6 @@
       <div class="label" id="gyroscope-value"></div>
       <div id="gyroscope" class="graph"></div>
     </div>
-
-    <!-- El widget RGB LED ha sido eliminado -->
 
     <div class="short widget">
       <div class="label">&#127777; Temperature - </div>
@@ -256,12 +254,7 @@
 </body>
 
 <script type="text/javascript">
-  /*
-    Demo modificado para Nicla Sense ME - 
-    - Eliminado control LED RGB
-    - Visualización 3D: prisma rectangular con Roll, Pitch, Yaw (en grados)
-    - La característica 7001 espera 3 floats: roll, pitch, yaw
-  */
+
 
   var maxRecords = 64;
 
@@ -507,7 +500,7 @@
     renderer.domElement.style.margin = "9px";
     
     // Crear un prisma rectangular (cubo alargado: ancho 3, alto 1, profundo 2)
-    const geometry = new THREE.BoxGeometry(3, 1, 2);
+    const geometry = new THREE.BoxGeometry(1, 3, 2);
     const material = new THREE.MeshStandardMaterial({ color: 0x3a86ff, metalness: 0.7, roughness: 0.2 });
     prismMesh = new THREE.Mesh(geometry, material);
     scene.add(prismMesh);
