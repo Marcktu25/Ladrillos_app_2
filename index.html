@@ -499,8 +499,8 @@
     container.insertBefore(renderer.domElement, canvasDigits);
     renderer.domElement.style.margin = "9px";
     
-    // Crear un prisma rectangular (cubo alargado: ancho 3, alto 1, profundo 2)
-    const geometry = new THREE.BoxGeometry(5, 3, 2);
+    // Crear un prisma rectangular (cubo alargado: ancho, alto, profundo)
+    const geometry = new THREE.BoxGeometry(1, 1, 5);
     const material = new THREE.MeshStandardMaterial({ color: 0x3a86ff, metalness: 0.7, roughness: 0.2 });
     prismMesh = new THREE.Mesh(geometry, material);
     scene.add(prismMesh);
