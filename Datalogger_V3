@@ -1,0 +1,194 @@
+#include "Nicla_System.h"
+#include "Arduino_BHY2.h"
+#include <ArduinoBLE.h>
+
+#define BLE_SENSE_UUID(val) ("19b10000-" val "-537e-4f6c-d104768a1214")
+
+const int VERSION = 0x00000000;
+
+BLEService service(BLE_SENSE_UUID("0000"));
+
+BLEUnsignedIntCharacteristic versionCharacteristic(BLE_SENSE_UUID("1001"), BLERead);
+BLEFloatCharacteristic temperatureCharacteristic(BLE_SENSE_UUID("2001"), BLERead);
+BLEUnsignedIntCharacteristic humidityCharacteristic(BLE_SENSE_UUID("3001"), BLERead);
+BLEFloatCharacteristic pressureCharacteristic(BLE_SENSE_UUID("4001"), BLERead);
+
+BLECharacteristic accelerometerCharacteristic(BLE_SENSE_UUID("5001"), BLERead | BLENotify, 3 * sizeof(float));
+BLECharacteristic gyroscopeCharacteristic(BLE_SENSE_UUID("6001"), BLERead | BLENotify, 3 * sizeof(float));
+
+// MODIFICACIÓN: Esta característica ahora envía 3 floats: Roll, Pitch, Yaw (en grados)
+BLECharacteristic eulerCharacteristic(BLE_SENSE_UUID("7001"), BLERead | BLENotify, 3 * sizeof(float));
+
+// Características de calidad de aire
+BLEFloatCharacteristic bsecCharacteristic(BLE_SENSE_UUID("9001"), BLERead);
+BLEIntCharacteristic  co2Characteristic(BLE_SENSE_UUID("9002"), BLERead);
+BLEUnsignedIntCharacteristic gasCharacteristic(BLE_SENSE_UUID("9003"), BLERead);
+
+String name;
+
+Sensor temperature(SENSOR_ID_TEMP);
+Sensor humidity(SENSOR_ID_HUM);
+Sensor pressure(SENSOR_ID_BARO);
+Sensor gas(SENSOR_ID_GAS);
+SensorXYZ gyroscope(SENSOR_ID_GYRO);
+SensorXYZ accelerometer(SENSOR_ID_ACC);
+SensorQuaternion quaternion(SENSOR_ID_RV);   // Seguimos leyendo el cuaternión del sensor
+SensorBSEC bsec(SENSOR_ID_BSEC);
+
+const float TEMP_OFFSET = -5.6394;  // Compensación de temperatura
+
+// Función para convertir cuaternión a ángulos de Euler (roll, pitch, yaw) en grados
+// Basada en la fórmula estándar (ZYX, es decir, yaw, pitch, roll)
+void quaternionToEuler(float x, float y, float z, float w, float &roll, float &pitch, float &yaw) {
+  // Roll (rotación alrededor del eje X)
+  float sinr_cosp = 2.0f * (w * x + y * z);
+  float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
+  roll = atan2(sinr_cosp, cosr_cosp);
+
+  // Pitch (rotación alrededor del eje Y)
+  float sinp = 2.0f * (w * y - z * x);
+  if (fabs(sinp) >= 1.0f)
+    pitch = copysign(M_PI / 2.0f, sinp); // Usar 90 grados si está fuera de rango
+  else
+    pitch = asin(sinp);
+
+  // Yaw (rotación alrededor del eje Z)
+  float siny_cosp = 2.0f * (w * z + x * y);
+  float cosy_cosp = 1.0f - 2.0f * (y * y + z * z);
+  yaw = atan2(siny_cosp, cosy_cosp);
+
+  // Convertir radianes a grados
+  roll = roll * 180.0f / M_PI;
+  pitch = pitch * 180.0f / M_PI;
+  yaw = yaw * 180.0f / M_PI;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Start");
+
+  nicla::begin();
+  nicla::leds.begin();
+  nicla::leds.setColor(green);
+
+  BHY2.begin(NICLA_STANDALONE);
+  temperature.begin();
+  humidity.begin();
+  pressure.begin();
+  gyroscope.begin();
+  accelerometer.begin();
+  quaternion.begin();
+  bsec.begin();
+  gas.begin();
+
+  if (!BLE.begin()) {
+    Serial.println("Failed to initialize BLE!");
+    while (1);
+  }
+
+  name = "NiclaSenseME-Ladrillos";
+  Serial.print("name = ");
+  Serial.println(name);
+
+  BLE.setLocalName(name.c_str());
+  BLE.setDeviceName(name.c_str());
+  BLE.setAdvertisedService(service);
+
+  // Añadir características (sin LED RGB)
+  service.addCharacteristic(temperatureCharacteristic);
+  service.addCharacteristic(humidityCharacteristic);
+  service.addCharacteristic(pressureCharacteristic);
+  service.addCharacteristic(versionCharacteristic);
+  service.addCharacteristic(accelerometerCharacteristic);
+  service.addCharacteristic(gyroscopeCharacteristic);
+  service.addCharacteristic(eulerCharacteristic);   // Antes quaternionCharacteristic
+  service.addCharacteristic(bsecCharacteristic);
+  service.addCharacteristic(co2Characteristic);
+  service.addCharacteristic(gasCharacteristic);
+
+  BLE.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
+
+  // Handlers de lectura
+  temperatureCharacteristic.setEventHandler(BLERead, onTemperatureCharacteristicRead);
+  humidityCharacteristic.setEventHandler(BLERead, onHumidityCharacteristicRead);
+  pressureCharacteristic.setEventHandler(BLERead, onPressureCharacteristicRead);
+  bsecCharacteristic.setEventHandler(BLERead, onBsecCharacteristicRead);
+  co2Characteristic.setEventHandler(BLERead, onCo2CharacteristicRead);
+  gasCharacteristic.setEventHandler(BLERead, onGasCharacteristicRead);
+
+  versionCharacteristic.setValue(VERSION);
+
+  BLE.addService(service);
+  BLE.advertise();
+}
+
+void loop() {
+  while (BLE.connected()) {
+    BHY2.update();
+
+    if (gyroscopeCharacteristic.subscribed()) {
+      float x = gyroscope.x();
+      float y = gyroscope.y();
+      float z = gyroscope.z();
+      float gyroVals[3] = {x, y, z};
+      gyroscopeCharacteristic.writeValue(gyroVals, sizeof(gyroVals));
+    }
+
+    if (accelerometerCharacteristic.subscribed()) {
+      float x = accelerometer.x();
+      float y = accelerometer.y();
+      float z = accelerometer.z();
+      float accVals[3] = {x, y, z};
+      accelerometerCharacteristic.writeValue(accVals, sizeof(accVals));
+    }
+
+    // En lugar de enviar cuaternión, calculamos Roll, Pitch, Yaw y los enviamos
+    if (eulerCharacteristic.subscribed()) {
+      float qx = quaternion.x();
+      float qy = quaternion.y();
+      float qz = quaternion.z();
+      float qw = quaternion.w();
+
+      float roll, pitch, yaw;
+      quaternionToEuler(qx, qy, qz, qw, roll, pitch, yaw);
+
+      float eulerVals[3] = {roll, pitch, yaw};
+      eulerCharacteristic.writeValue(eulerVals, sizeof(eulerVals));
+    }
+  }
+}
+
+void blePeripheralDisconnectHandler(BLEDevice central) {
+  nicla::leds.setColor(red);
+}
+
+void onTemperatureCharacteristicRead(BLEDevice central, BLECharacteristic characteristic) {
+  float rawTemp = temperature.value();
+  float correctedTemp = rawTemp + TEMP_OFFSET;
+  temperatureCharacteristic.writeValue(correctedTemp);
+}
+
+void onHumidityCharacteristicRead(BLEDevice central, BLECharacteristic characteristic) {
+  uint8_t humidityValue = (uint8_t)(humidity.value() + 0.5f);
+  humidityCharacteristic.writeValue(humidityValue);
+}
+
+void onPressureCharacteristicRead(BLEDevice central, BLECharacteristic characteristic) {
+  float pressureValue = pressure.value();
+  pressureCharacteristic.writeValue(pressureValue);
+}
+
+void onBsecCharacteristicRead(BLEDevice central, BLECharacteristic characteristic) {
+  float airQuality = (float)bsec.iaq();
+  bsecCharacteristic.writeValue(airQuality);
+}
+
+void onCo2CharacteristicRead(BLEDevice central, BLECharacteristic characteristic) {
+  uint32_t co2 = bsec.co2_eq();
+  co2Characteristic.writeValue(co2);
+}
+
+void onGasCharacteristicRead(BLEDevice central, BLECharacteristic characteristic) {
+  unsigned int g = gas.value();
+  gasCharacteristic.writeValue(g);
+}
